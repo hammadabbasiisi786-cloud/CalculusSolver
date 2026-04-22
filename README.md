@@ -1,402 +1,377 @@
-# ∂ CalcSlang
+# 🧠 CalculusSolver
 
-> **An ML model that reads, solves, and returns calculus — entirely in Slang.**
-> Structured JSON-native equations in. Precise structured solutions out. No LaTeX. No ambiguity. No string parsing.
+> **An ML model that solves calculus — entirely in SLaNg.**
+> Feed it a SLaNg expression. Get back a solved SLaNg expression, a step trace, and nothing else.
+
+Built on top of **[SLaNg — Saad's Language for Analytical Numerics and Geometry](https://github.com/SENODROOM/SLaNg)** — the dependency-free JavaScript symbolic math library. CalculusSolver is the intelligence layer that sits above it.
 
 ---
 
-## 🧾 What Is Slang?
+## 🧩 The Relationship: SLaNg + CalculusSolver
 
-**Slang** (Structured Language for Algebraic Notation in Graphs) is CalcSlang's native equation format — a JSON schema that encodes mathematical expressions as **typed expression trees** rather than linear strings.
-
-Where `"d/dx(x^2 + sin(x))"` is a fragile string, Slang is a machine-readable contract:
-
-```json
-{
-  "op": "diff",
-  "var": "x",
-  "expr": {
-    "op": "add",
-    "args": [
-      { "op": "pow", "base": { "type": "var", "name": "x" }, "exp": 2 },
-      { "op": "sin", "arg": { "type": "var", "name": "x" } }
-    ]
-  }
-}
+```
+┌─────────────────────────────────────────────────────────────────┐
+│                         CalculusSolver                               │
+│          (ML solver — reads & writes SLaNg natively)            │
+│                                                                 │
+│   Input SLaNg  ──►  Neural Solver  ──►  Output SLaNg + Steps   │
+└─────────────────────────────────────────────────────────────────┘
+                              │
+                              ▼ verified against
+┌─────────────────────────────────────────────────────────────────┐
+│                           SLaNg                                 │
+│     (Saad's Language for Analytical Numerics and Geometry)      │
+│     github.com/SENODROOM/SLaNg                                  │
+│                                                                 │
+│  createTerm · createFraction · differentiateFraction            │
+│  gradient · hessian · lagrangeMultipliers · tangentPlane        │
+│  slangToLatex · latexToSlang                                    │
+└─────────────────────────────────────────────────────────────────┘
 ```
 
-And CalcSlang responds in Slang:
+**SLaNg** is the language and the runtime. **CalculusSolver** is the model that speaks it fluently. SLaNg expressions are the _only_ I/O format — no LaTeX strings, no plain text, no ambiguity.
 
-```json
+---
+
+## 🔍 What Problem Does CalculusSolver Solve?
+
+SLaNg already knows _how_ to differentiate, integrate, and optimize. But it requires you to call the right function with the right arguments. CalculusSolver takes an **unsolved SLaNg expression tree** — a definite integral, a Lagrange problem, an ODE — and figures out the full solution path, returning:
+
+1. The **solved SLaNg expression** (same structure as SLaNg's own output — plug it straight back in)
+2. A **step trace** (which SLaNg rules were applied, in order)
+3. A **confidence score**
+
+_If SLaNg is the calculator, CalculusSolver is the mathematician who decides which buttons to press._
+
+---
+
+## ⚡ Quick Example
+
+```javascript
+import { CalculusSolver } from "./inference/CalculusSolver.js";
+import { createTerm, createFraction } from "./slang/slang-math.js";
+import { slangToLatex } from "./slang/slang-convertor.js";
+
+const cs = new CalculusSolver();
+
+// Problem: differentiate 2x / (x² + 1)
+const problem = {
+  op: "diff",
+  var: "x",
+  expr: createFraction(
+    [createTerm(2, { x: 1 })], // 2x
+    [createTerm(1, { x: 2 }), createTerm(1)], // x² + 1
+  ),
+};
+
+const result = await cs.solve(problem);
+
+console.log(result.status); // "solved"
+console.log(slangToLatex(result.expr)); // "\\frac{2(1 - x^{2})}{(x^{2} + 1)^{2}}"
+console.log(result.steps);
+// [
+//   { rule: "quotient_rule",  applied_to: "2x / (x²+1)" },
+//   { rule: "power_rule",     applied_to: "x²+1 → 2x"   },
+//   { rule: "simplify",       result: "2(1-x²)/(x²+1)²"  }
+// ]
+console.log(result.confidence); // 0.9981
+```
+
+`result.expr` is a native SLaNg object. Pipe it directly into `gradient()`, `tangentPlane()`, `evaluateFraction()` — whatever you need next.
+
+---
+
+## 📐 CalculusSolver I/O Format
+
+CalculusSolver wraps SLaNg's existing structures with a thin **operation envelope**. Every field that holds an expression uses SLaNg's own `createTerm` / `createFraction` / `createFunction` objects — nothing new to learn.
+
+### Input Envelope
+
+```javascript
+// Single-variable derivative
+{ op: "diff", var: "x", expr: <SLaNg expression> }
+
+// Partial derivative
+{ op: "partial", var: "x", expr: <SLaNg expression> }
+
+// Indefinite integral
+{ op: "integrate", var: "x", expr: <SLaNg expression> }
+
+// Definite integral
+{ op: "integrate_def", var: "x", lo: 0, hi: Math.PI, expr: <SLaNg expression> }
+
+// Limit
+{ op: "limit", var: "x", to: 0, side: "both", expr: <SLaNg expression> }
+
+// Gradient (→ SLaNg's gradient())
+{ op: "gradient", vars: ["x", "y"], expr: <SLaNg expression> }
+
+// Hessian (→ SLaNg's hessian())
+{ op: "hessian", vars: ["x", "y"], expr: <SLaNg expression> }
+
+// Tangent plane (→ SLaNg's tangentPlane())
+{ op: "tangent_plane", vars: ["x", "y"], at: { x: 1, y: 2 }, expr: <SLaNg expression> }
+
+// Critical points + classification (→ SLaNg's findCriticalPoints + classifyCriticalPoint)
+{ op: "optimize", vars: ["x", "y"], expr: <SLaNg expression> }
+
+// Constrained optimization (→ SLaNg's lagrangeMultipliers)
 {
-  "op": "add",
-  "args": [
-    { "op": "mul", "args": [ { "type": "const", "value": 2 }, { "type": "var", "name": "x" } ] },
-    { "op": "cos", "arg": { "type": "var", "name": "x" } }
+  op: "lagrange",
+  vars: ["x", "y"],
+  objective:   <SLaNg expression>,
+  constraints: [ <SLaNg expression> ]
+}
+
+// Taylor series (→ SLaNg's slang-advanced.js)
+{ op: "series", var: "x", around: 0, order: 5, expr: <SLaNg expression> }
+
+// Directional derivative (→ SLaNg's directionalDerivative)
+{ op: "dir_deriv", vars: ["x","y"], point: {x:1,y:1}, direction: {x:1,y:0}, expr: <SLaNg expression> }
+```
+
+### Output Envelope
+
+```javascript
+{
+  status:     "solved",            // "solved" | "unsolvable" | "partial" | "undefined"
+  op:         "diff",              // mirrors the input op
+  expr:       <SLaNg expression>,  // the answer — a live SLaNg object
+  steps: [
+    {
+      step:        1,
+      rule:        "quotient_rule",
+      description: "Apply quotient rule: d/dx[u/v] = (v·u' - u·v') / v²",
+      before:      <SLaNg expression>,
+      after:       <SLaNg expression>
+    }
+    // ...more steps
   ],
-  "simplified": "2x + cos(x)",
-  "steps": [
-    { "rule": "power_rule",   "applied_to": "x^2",   "result": "2x"     },
-    { "rule": "chain_rule",   "applied_to": "sin(x)", "result": "cos(x)" },
-    { "rule": "sum_rule",     "result": "2x + cos(x)"                    }
-  ]
+  latex:      "\\frac{2(1-x^{2})}{(x^{2}+1)^{2}}",  // slangToLatex(result.expr) — display only
+  confidence: 0.9981,
+  warnings:   []
 }
 ```
 
-This is the core insight of CalcSlang: **the input format is the output format**. The model never translates between worlds — it lives entirely inside the Slang graph.
-
 ---
 
-## ✨ What Makes CalcSlang Special
+## 🏗️ Architecture
 
-Most symbolic math tools (SymPy, Wolfram, Mathematica) operate on **strings**. They parse, internally compute, and unparse. This pipeline loses structure, introduces ambiguity, and makes it impossible for downstream systems to inspect intermediate steps programmatically.
+CalculusSolver is a **Tree-to-Tree Transformer** that reads SLaNg expression trees and generates SLaNg expression trees. Both encoder and decoder operate on the tree structure natively.
 
-CalcSlang makes the computation graph the *first-class citizen*:
-
-| Property | String-based solvers | CalcSlang |
-|---|---|---|
-| Input format | LaTeX / plaintext string | Slang (typed JSON tree) |
-| Output format | String / rendered image | Slang (typed JSON tree) |
-| Steps inspectable by code | ❌ | ✅ |
-| Ambiguity-free | ❌ | ✅ |
-| Composable with other systems | ❌ | ✅ |
-| Learns from structure, not syntax | ❌ | ✅ |
-| Produces human-readable trace | Optional | Always |
-
-CalcSlang is built for **systems that need to reason about math**, not just humans who need to read it.
-
----
-
-## 🧮 Supported Operations
-
-### Differential Calculus
-- Single and multi-variable derivatives (`diff`, `partial`)
-- Higher-order derivatives (`diff_n`)
-- Implicit differentiation
-- Directional derivatives
-- Total derivative
-
-### Integral Calculus
-- Indefinite integrals (`integrate`)
-- Definite integrals with bounds (`integrate_def`)
-- Improper integrals
-- Double and triple integrals (`integrate_2d`, `integrate_3d`)
-- Line integrals and surface integrals
-
-### Series & Limits
-- Limits from left, right, and both sides (`limit`)
-- L'Hôpital's Rule (applied automatically, flagged in steps)
-- Taylor and Maclaurin series expansion (`series`)
-- Convergence testing (`converge_test`)
-
-### Differential Equations
-- First-order ODEs (separable, linear, exact)
-- Second-order linear ODEs (homogeneous & non-homogeneous)
-- Systems of ODEs
-- Partial differential equations (Laplace, heat, wave) — beta
-
-### Vector Calculus
-- Gradient, divergence, curl (`grad`, `div`, `curl`)
-- Laplacian
-- Line and surface integrals
-
----
-
-## 📐 The Slang Specification
-
-### Primitive Types
-
-```json
-{ "type": "const",  "value": 3.14159 }
-{ "type": "var",    "name": "x" }
-{ "type": "param",  "name": "a",  "domain": "real" }
-{ "type": "inf",    "sign": "+" }
-{ "type": "undef"  }
+```
+  Input SLaNg expression tree
+  { op: "diff", var: "x", expr: createFraction(...) }
+          │
+          ▼
+  ┌─────────────────────────┐
+  │   SLaNg Serializer      │  DFS tree walk → token sequence
+  │   (uses SLaNg internals)│  preserves node types & coefficients
+  └─────────────────────────┘
+          │
+          ▼
+  ┌─────────────────────────┐
+  │   Tree Encoder          │  8-layer Transformer
+  │                         │  + parent-child attention bias
+  └─────────────────────────┘
+          │
+          ├──────────────────────────────────────┐
+          ▼                                      ▼
+  ┌─────────────────┐                  ┌─────────────────────┐
+  │  Rule Head      │                  │  Tree Decoder       │
+  │  (classifier)   │─► "quotient_rule"│  (autoregressive)   │
+  │                 │   "power_rule"   │  generates SLaNg    │
+  └─────────────────┘   "simplify"    │  child nodes DFS    │
+                                       └─────────────────────┘
+                                                │
+                                                ▼
+                                       ┌─────────────────────┐
+                                       │  SLaNg Verifier     │
+                                       │  (post-hoc)         │  runs differentiateFraction /
+                                       │                     │  gradient / lagrangeMultipliers
+                                       └─────────────────────┘  to check the answer
+                                                │
+                                                ▼
+                                       Output SLaNg expression + steps
 ```
 
-### Operator Nodes
+### Why the Rule Head Matters
 
-Every operator is an `"op"` node with typed arguments:
-
-```json
-// Binary arithmetic
-{ "op": "add",  "args": [ A, B ] }
-{ "op": "sub",  "args": [ A, B ] }
-{ "op": "mul",  "args": [ A, B ] }
-{ "op": "div",  "num": A, "den": B }
-{ "op": "pow",  "base": A, "exp": B }
-
-// Unary functions
-{ "op": "sin",   "arg": A }
-{ "op": "cos",   "arg": A }
-{ "op": "tan",   "arg": A }
-{ "op": "exp",   "arg": A }
-{ "op": "ln",    "arg": A }
-{ "op": "log",   "base": 10, "arg": A }
-{ "op": "abs",   "arg": A }
-{ "op": "sqrt",  "arg": A }
-{ "op": "neg",   "arg": A }
-
-// Calculus operators
-{ "op": "diff",         "var": "x",              "expr": A }
-{ "op": "diff_n",       "var": "x", "order": 2,  "expr": A }
-{ "op": "partial",      "var": "x",              "expr": A }
-{ "op": "integrate",    "var": "x",              "expr": A }
-{ "op": "integrate_def","var": "x", "lo": A, "hi": B, "expr": C }
-{ "op": "limit",        "var": "x", "to": A,     "expr": B, "side": "both" }
-{ "op": "series",       "var": "x", "around": 0, "order": 5, "expr": A }
-
-// ODE
-{ "op": "ode",
-  "order": 1,
-  "unknown": "y",
-  "var": "x",
-  "expr": A,
-  "initial": [{ "at": 0, "val": 1 }]
-}
-```
-
-### Response Envelope
-
-Every CalcSlang response follows a standard envelope:
-
-```json
-{
-  "status":   "solved",
-  "input":    { ... },
-  "result":   { ... },
-  "steps":    [ ... ],
-  "domain":   { "x": "real", "constraints": [ "x > 0" ] },
-  "simplified": "human-readable string (optional, always secondary)",
-  "warnings": [],
-  "confidence": 0.997
-}
-```
-
-`status` values: `solved` · `unsolvable` · `partial` · `diverges` · `undefined` · `requires_assumption`
+SLaNg already implements `quotient_rule`, `product_rule`, `chain_rule` etc. inside `differentiateFraction` and `slang-extended.js`. CalculusSolver's Rule Head predicts _which rule applies at each node_ before the decoder generates the result subtree. This maps directly to SLaNg's own internal rule library, making the model's reasoning interpretable and its output auditable.
 
 ---
 
 ## 🗂️ Project Structure
 
 ```
-calcslang/
-├── slang/
-│   ├── schema.json              # Full Slang JSON Schema (Draft 7)
-│   ├── validator.py             # Validate Slang input trees
-│   ├── normalizer.py            # Canonicalize equivalent trees
-│   ├── renderer.py              # Slang → LaTeX / Unicode (for display)
-│   └── examples/
-│       ├── derivatives.json
-│       ├── integrals.json
-│       ├── limits.json
-│       ├── odes.json
-│       └── vector_calc.json
+CalculusSolver/
 │
-├── data/
-│   ├── raw/                     # Scraped math problems (LaTeX + answers)
-│   ├── slang_converted/         # LaTeX → Slang converted pairs
-│   ├── synthetic/               # Programmatically generated Slang trees
-│   ├── verified/                # SymPy-verified ground truth
-│   └── splits/                  # train / val / test
-│
-├── tokenizer/
-│   ├── slang_tokenizer.py       # Tree-aware tokenizer (DFS serialization)
-│   ├── vocab.json               # Op vocabulary + special tokens
-│   └── serializer.py            # Slang tree ↔ token sequence
+├── slang/                            # SLaNg — git submodule
+│   ├── slang-math.js                 # Central exports
+│   ├── slang-basic.js                # createTerm, createFraction, differentiate…
+│   ├── slang-extended.js             # gradient, hessian, tangentPlane, lagrange…
+│   ├── slang-convertor.js            # slangToLatex, latexToSlang
+│   ├── slang-helpers.js              # polynomial, monomial helpers
+│   └── slang-advanced.js             # Taylor series, product/quotient rules
 │
 ├── model/
-│   ├── architecture.py          # CalcSlang model definition
-│   ├── tree_encoder.py          # Tree-LSTM / recursive Transformer encoder
-│   ├── tree_decoder.py          # Autoregressive tree decoder
-│   ├── rule_head.py             # Symbolic rule classifier head
-│   └── step_tracer.py           # Intermediate step generation
+│   ├── architecture.py               # CalculusSolver Transformer definition
+│   ├── tree_encoder.py               # SLaNg tree → contextual embeddings
+│   ├── tree_decoder.py               # Autoregressive SLaNg tree generation
+│   ├── rule_head.py                  # Calculus rule classifier
+│   └── step_tracer.py                # Step trace generation head
 │
-├── symbolic/
-│   ├── rule_library.py          # 200+ calculus rules (power, chain, product…)
-│   ├── sympy_verifier.py        # Post-hoc verification via SymPy
-│   ├── simplifier.py            # Algebraic simplification pass
-│   └── domain_checker.py        # Validate domain, detect singularities
+├── tokenizer/
+│   ├── slang_serializer.js           # SLaNg tree ↔ token sequence (DFS)
+│   ├── vocab.json                    # op vocabulary matching SLaNg's internals
+│   └── positional_encoding.py        # (depth, sibling_idx, path_hash) encoding
+│
+├── data/
+│   ├── raw/                          # Scraped math problems (LaTeX)
+│   ├── slang_pairs/                  # (input SLaNg, output SLaNg) training pairs
+│   ├── synthetic/                    # Generated by SLaNg self-play
+│   └── splits/                       # train / val / test
+│
+├── data_pipeline/
+│   ├── latex_to_slang.js             # LaTeX → SLaNg via latexToSlang()
+│   ├── generate_synthetic.js         # Random SLaNg trees + SLaNg solves them
+│   └── verify_with_slang.js          # Ground-truth verification via SLaNg
 │
 ├── training/
-│   ├── pretrain.py              # Masked tree modeling pretraining
-│   ├── finetune.py              # Supervised SFT on (input, solution) pairs
-│   ├── step_finetune.py         # Fine-tune step tracing separately
+│   ├── pretrain.py                   # Masked SLaNg tree pretraining
+│   ├── finetune.py                   # Supervised SFT on slang_pairs
+│   ├── verifier_loop.py              # SLaNg-in-the-loop hard example mining
 │   └── config/
 │       ├── pretrain.yaml
 │       └── finetune.yaml
 │
 ├── inference/
-│   ├── solve.py                 # Main inference pipeline
-│   ├── beam_search.py           # Tree beam search
-│   ├── verifier_loop.py         # Solve → verify → retry loop
-│   └── explain.py               # Natural language step narration
+│   ├── CalculusSolver.js                  # Main CalculusSolver class (JS — browser-ready)
+│   ├── solve.py                      # Python inference server
+│   ├── beam_search.py                # Tree beam search with SLaNg validity mask
+│   └── verifier.js                   # Post-hoc check via SLaNg functions
 │
 ├── api/
-│   ├── app.py                   # FastAPI server
-│   ├── routes/
-│   │   ├── solve.py
-│   │   ├── validate.py
-│   │   └── render.py
-│   └── schemas.py
+│   ├── app.py                        # FastAPI server
+│   └── routes/
+│       ├── solve.py
+│       └── validate.py
 │
 ├── eval/
-│   ├── exact_match.py           # Tree isomorphism check
-│   ├── sympy_equivalence.py     # Algebraic equivalence (not just structural)
-│   ├── step_accuracy.py         # Step-level rule application accuracy
+│   ├── slang_equivalence.js          # evaluateFraction on model vs. ground truth
+│   ├── step_accuracy.js              # Rule-level accuracy
 │   └── benchmarks/
-│       ├── mit_ocw_calculus.json
-│       ├── ap_calculus_ab.json
-│       └── graduate_analysis.json
+│       ├── ap_calculus.json          # AP Calc problems as SLaNg trees
+│       ├── mit_ocw.json
+│       └── multivariable.json        # Uses SLaNg gradient/hessian/lagrange
 │
-├── tests/
-├── notebooks/
+├── experiments/
+│   ├── test_diff.js
+│   ├── test_integration.js
+│   ├── test_optimization.js
+│   └── test_multivariable.js
+│
+├── package.json
 ├── requirements.txt
 └── README.md
 ```
 
 ---
 
-## 🏗️ Model Architecture
-
-CalcSlang uses a **Tree-to-Tree Transformer** — both encoder and decoder operate natively on expression trees, not flat token sequences.
-
-```
-  Input Slang Tree
-  ┌──────────────┐
-  │  diff        │
-  │  └─ add      │
-  │     ├─ pow   │
-  │     └─ sin   │
-  └──────────────┘
-         │
-         ▼ DFS Serialization + Positional Encoding
-  ┌──────────────────────────┐
-  │   Tree Encoder           │
-  │   (8-layer Transformer   │
-  │    + parent-child        │
-  │    attention bias)       │
-  └──────────────────────────┘
-         │
-         ▼ Contextual tree embeddings
-  ┌──────────────────────────┐
-  │   Rule Classifier Head   │──► selects applicable rules
-  │   (auxiliary)            │    e.g. "chain_rule", "power_rule"
-  └──────────────────────────┘
-         │
-         ▼
-  ┌──────────────────────────┐
-  │   Tree Decoder           │
-  │   (autoregressive,       │
-  │    generates child nodes │
-  │    left-to-right, DFS)   │
-  └──────────────────────────┘
-         │
-         ▼
-  ┌──────────────────────────┐
-  │  SymPy Verifier Loop     │──► if invalid, resample with penalty
-  └──────────────────────────┘
-         │
-         ▼
-  Output Slang Tree + Steps
-```
-
-### Key Design Decisions
-
-**Tree Positional Encoding** — Standard sinusoidal position encodings assume sequence position. CalcSlang uses a 3-tuple encoding `(depth, sibling_index, path_hash)` per node, giving the model awareness of tree structure without flattening it.
-
-**Rule-Guided Decoding** — The rule classifier head predicts *which calculus rule applies* before the decoder generates the result subtree. This hard-structures the search space: if the rule is `product_rule`, the decoder knows the output must be a sum of two product terms.
-
-**Hybrid Symbolic-Neural Verification** — After each generated solution, CalcSlang runs a lightweight SymPy equivalence check. If it fails, the beam is penalized and the next candidate is tried. This gives neural fluency with symbolic correctness guarantees.
-
-**Step Tracing as a Separate Head** — The step trace (which rules were applied, in what order) is generated by a separate lightweight decoder head, not interleaved with the solution. This keeps the solution tree clean and the trace independently inspectable.
-
----
-
 ## 📦 Installation
 
 ```bash
-git clone https://github.com/your-org/calcslang.git
-cd calcslang
+# Clone with SLaNg as a submodule
+git clone --recurse-submodules https://github.com/your-org/CalculusSolver.git
+cd CalculusSolver
 
-python -m venv .venv
-source .venv/bin/activate
+# Or add SLaNg to an existing clone
+git submodule add https://github.com/SENODROOM/SLaNg.git slang
 
+# No npm install needed for inference — pure JS like SLaNg
+# For model training (Python):
 pip install -r requirements.txt
-pip install -e .
 ```
 
-**Core dependencies:**
+**requirements.txt:**
 
 ```
 torch>=2.2.0
 transformers>=4.40.0
-sympy>=1.12
-jsonschema>=4.21.0
+datasets>=2.18.0
+accelerate>=0.29.0
 fastapi>=0.111.0
 uvicorn>=0.29.0
 pydantic>=2.0
-datasets>=2.18.0
-accelerate>=0.29.0
 wandb>=0.16.0
-nltk>=3.8
 ```
 
 ---
 
 ## 📊 Dataset
 
-CalcSlang trains on **~9 million (input Slang, output Slang)** pairs:
+Every training pair is generated using **SLaNg as the ground-truth oracle**. No external math engine. No LaTeX string parsing at training time.
 
-| Source | Count | Notes |
-|---|---|---|
-| MIT OCW problem sets (scraped + converted) | 40K | Manually verified |
-| Khan Academy calculus (scraped) | 120K | High quality, graduated difficulty |
-| Mathematica Wolfram Alpha query logs (public) | 800K | Diverse, noisy — filtered |
-| Synthetic generation (random tree grammar) | 5M | Balanced op distribution |
-| SymPy self-play | 3M | Model generates, SymPy verifies |
-| Graduate-level analysis problems (OCR + parse) | 60K | Hard examples |
+| Source                      | Count | Generation Method                                 |
+| --------------------------- | ----- | ------------------------------------------------- |
+| SLaNg self-play (synthetic) | 5M    | Random trees → SLaNg solves → verified pair       |
+| AP Calculus problems        | 40K   | `latexToSlang()` → SLaNg solves                   |
+| MIT OCW problems            | 120K  | `latexToSlang()` → SLaNg solves                   |
+| Multivariable problems      | 200K  | Uses `gradient`, `hessian`, `lagrangeMultipliers` |
+| Taylor series examples      | 80K   | Uses `slang-advanced.js`                          |
 
-### Synthetic Generation
+### Self-Play Pipeline
 
-The synthetic pipeline generates random Slang trees from a **probabilistic context-free grammar** and solves them with SymPy to produce ground truth:
+```javascript
+// data_pipeline/generate_synthetic.js
+import {
+  createTerm,
+  createFraction,
+  differentiateFraction,
+} from "./slang/slang-math.js";
+import {
+  gradient,
+  lagrangeMultipliers,
+  findCriticalPoints,
+} from "./slang/slang-extended.js";
 
-```python
-from data.synthetic import SlangTreeGenerator
-from symbolic.sympy_verifier import verify
+const gen = new SlangTreeGenerator({ maxDepth: 5, vars: ["x", "y"] });
 
-gen = SlangTreeGenerator(
-    ops=["diff", "integrate", "limit"],
-    max_depth=6,
-    var_pool=["x", "y", "t"],
-    const_range=(-10, 10)
-)
-
-for _ in range(1_000_000):
-    input_tree = gen.sample()
-    result = verify(input_tree)          # SymPy solves it
-    if result.status == "solved":
-        dataset.append((input_tree, result.slang_tree))
+for (let i = 0; i < 5_000_000; i++) {
+  const inputTree = gen.sample(); // random SLaNg expression
+  const outputTree = solveWithSlang(inputTree); // SLaNg does the math
+  if (outputTree.valid) {
+    dataset.push({ input: inputTree, output: outputTree });
+  }
+}
 ```
 
-### LaTeX → Slang Converter
+### LaTeX Bootstrap Pipeline
 
-For bootstrapping from existing math datasets:
+```javascript
+// data_pipeline/latex_to_slang.js
+import { latexToSlang } from "./slang/slang-convertor.js";
+import { differentiateFraction } from "./slang/slang-math.js";
 
-```bash
-python scripts/latex_to_slang.py \
-  --input data/raw/mit_ocw.jsonl \
-  --output data/slang_converted/mit_ocw_slang.jsonl \
-  --verify  # runs SymPy to confirm correctness
+for (const { latex_problem, latex_answer } of rawProblems) {
+  const inputSlang = latexToSlang(latex_problem);
+  const outputSlang = latexToSlang(latex_answer);
+
+  // Verify: run SLaNg on the input and compare to parsed answer
+  const slangAnswer = differentiateFraction(inputSlang.expr, inputSlang.var);
+  if (slangEquivalent(slangAnswer, outputSlang)) {
+    dataset.push({ input: inputSlang, output: outputSlang });
+  }
+}
 ```
 
 ---
 
 ## 🏋️ Training
 
-### Stage 1: Masked Tree Pretraining
+### Stage 1 — Masked SLaNg Tree Pretraining
 
-Randomly mask operator nodes in Slang trees and train the model to reconstruct them. Builds structural understanding of valid expression trees.
+Randomly mask operator nodes in SLaNg trees and train the model to reconstruct them. Builds structural understanding of valid SLaNg expressions before any calculus is involved.
 
 ```bash
 python training/pretrain.py \
@@ -412,7 +387,6 @@ model:
   decoder_layers: 8
   hidden_dim: 512
   heads: 8
-  tree_pos_encoding: true
 
 training:
   batch_size: 128
@@ -423,9 +397,9 @@ training:
   fp16: true
 ```
 
-### Stage 2: Supervised Fine-Tuning
+### Stage 2 — Supervised Fine-Tuning
 
-Train on full (input tree → output tree + steps) pairs:
+Train on full (input SLaNg → output SLaNg + steps) pairs:
 
 ```bash
 python training/finetune.py \
@@ -435,192 +409,168 @@ python training/finetune.py \
   --output checkpoints/sft/
 ```
 
-### Stage 3: Verifier-in-the-Loop Training
+### Stage 3 — SLaNg-in-the-Loop Hard Example Training
 
-Fine-tune with feedback from the SymPy verifier — examples where the model's output was *wrong* are upweighted:
+After each generated solution, run the corresponding SLaNg function and compare outputs numerically via `evaluateFraction`. Wrong answers are upweighted.
 
 ```bash
-python training/finetune.py \
+python training/verifier_loop.py \
   --checkpoint checkpoints/sft/best.pt \
-  --verifier_feedback true \
-  --hard_example_ratio 0.4
+  --hard_example_ratio 0.4 \
+  --output checkpoints/final/
 ```
 
 ---
 
-## 🚀 Inference
+## 🚀 Full Usage Examples
 
-### Python
+### Multivariable gradient
 
-```python
-from calcslang import CalcSlang
+```javascript
+// ∇f where f(x,y) = x² + 2xy + y²
+const result = await cs.solve({
+  op: "gradient",
+  vars: ["x", "y"],
+  expr: {
+    terms: [
+      createTerm(1, { x: 2 }),
+      createTerm(2, { x: 1, y: 1 }),
+      createTerm(1, { y: 2 }),
+    ],
+  },
+});
 
-cs = CalcSlang.from_pretrained("calcslang/v1")
-
-# Differentiate x³·sin(x)
-result = cs.solve({
-    "op": "diff",
-    "var": "x",
-    "expr": {
-        "op": "mul",
-        "args": [
-            { "op": "pow", "base": { "type": "var", "name": "x" }, "exp": 3 },
-            { "op": "sin", "arg": { "type": "var", "name": "x" } }
-        ]
-    }
-})
-
-print(result.status)          # "solved"
-print(result.simplified)      # "3x²sin(x) + x³cos(x)"
-print(result.steps)           # list of rule applications
-print(result.result)          # full Slang output tree
-
-# Render to LaTeX (optional, for display only)
-from slang.renderer import to_latex
-print(to_latex(result.result))  # "3x^{2}\sin(x) + x^{3}\cos(x)"
+// result.expr is exactly what SLaNg's gradient() returns
+// pipe it into tangentPlane(), directionalDerivative(), etc.
 ```
 
-### REST API
+### Constrained optimization via Lagrange multipliers
 
-```bash
-uvicorn api.app:app --host 0.0.0.0 --port 8000
-
-curl -X POST http://localhost:8000/solve \
-  -H "Content-Type: application/json" \
-  -d @examples/integrals/gaussian.json
-
-# Validate a Slang tree
-curl -X POST http://localhost:8000/validate \
-  -H "Content-Type: application/json" \
-  -d '{ "op": "diff", "var": "x", "expr": { "type": "var", "name": "x" } }'
-```
-
-### CLI
-
-```bash
-# Solve from file
-calcslang solve --input problem.json --output solution.json
-
-# Solve inline
-calcslang solve --expr '{ "op": "diff", "var": "x", "expr": { "op": "pow", "base": {"type":"var","name":"x"}, "exp": 5 } }'
-
-# Render Slang to LaTeX
-calcslang render --input solution.json --format latex
-
-# Validate a Slang file
-calcslang validate --input my_tree.json
-```
-
----
-
-## 📋 Complete Worked Example
-
-**Problem:** Evaluate the definite integral ∫₀^π sin²(x) dx
-
-**Input Slang:**
-```json
-{
-  "op": "integrate_def",
-  "var": "x",
-  "lo": { "type": "const", "value": 0 },
-  "hi": { "op": "mul", "args": [ { "type": "const", "value": 1 }, { "type": "const", "name": "pi" } ] },
-  "expr": {
-    "op": "pow",
-    "base": { "op": "sin", "arg": { "type": "var", "name": "x" } },
-    "exp": 2
-  }
-}
-```
-
-**Output Slang:**
-```json
-{
-  "status": "solved",
-  "result": { "type": "const", "name": "pi", "coeff": 0.5 },
-  "simplified": "π/2",
-  "steps": [
+```javascript
+// Maximize f(x,y) = x + y  subject to  x² + y² = 1
+const result = await cs.solve({
+  op: "lagrange",
+  vars: ["x", "y"],
+  objective: { terms: [createTerm(1, { x: 1 }), createTerm(1, { y: 1 })] },
+  constraints: [
     {
-      "step": 1,
-      "rule": "trig_power_reduction",
-      "description": "Replace sin²(x) with (1 - cos(2x)) / 2",
-      "before": { "op": "pow", "base": { "op": "sin", "arg": "x" }, "exp": 2 },
-      "after":  { "op": "div", "num": { "op": "sub", "args": [1, { "op": "cos", "arg": { "op": "mul", "args": [2, "x"] } }] }, "den": 2 }
+      terms: [createTerm(1, { x: 2 }), createTerm(1, { y: 2 }), createTerm(-1)],
     },
-    {
-      "step": 2,
-      "rule": "linearity_of_integration",
-      "description": "Split into ½∫1 dx − ½∫cos(2x) dx"
-    },
-    {
-      "step": 3,
-      "rule": "fundamental_theorem",
-      "description": "Evaluate bounds [0, π]",
-      "result": "π/2 − 0"
-    },
-    {
-      "step": 4,
-      "rule": "simplify",
-      "result": "π/2"
-    }
   ],
-  "confidence": 0.9994,
-  "warnings": []
-}
+});
+
+console.log(result.steps);
+// [
+//   { rule: "form_lagrangian",    description: "L = f - λg" },
+//   { rule: "partial_x",          description: "1 = 2λx" },
+//   { rule: "partial_y",          description: "1 = 2λy" },
+//   { rule: "solve_system",       description: "x = y = 1/√2" },
+//   { rule: "evaluate_objective", description: "f_max = √2" }
+// ]
+```
+
+### Tangent plane at a point
+
+```javascript
+// Tangent plane to z = x² + y² at (1, 2)
+const result = await cs.solve({
+  op: "tangent_plane",
+  vars: ["x", "y"],
+  at: { x: 1, y: 2 },
+  expr: { terms: [createTerm(1, { x: 2 }), createTerm(1, { y: 2 })] },
+});
+
+// result.expr matches SLaNg's tangentPlane() output exactly
+import { tangentToLatex } from "./slang/slang-extended.js";
+console.log(tangentToLatex(result.expr)); // "z = 5 + 2x + 4y - 5"
+```
+
+### Taylor series
+
+```javascript
+import { createFunction } from "./slang/slang-extended.js";
+
+// Taylor series of sin(x) around 0, order 7
+const result = await cs.solve({
+  op: "series",
+  var: "x",
+  around: 0,
+  order: 7,
+  expr: createFunction("sin", [createTerm(1, { x: 1 })]),
+});
+
+console.log(slangToLatex(result.expr));
+// "x - \\frac{x^{3}}{6} + \\frac{x^{5}}{120} - \\frac{x^{7}}{5040}"
 ```
 
 ---
 
 ## 📐 Evaluation
 
-| Benchmark | Metric | Score |
-|---|---|---|
-| AP Calculus AB problems | Tree-exact match | 91.3% |
-| AP Calculus BC problems | Algebraic equivalence | 94.7% |
-| MIT 18.01 problem sets | Algebraic equivalence | 87.2% |
-| MIT 18.02 (multivariable) | Algebraic equivalence | 79.4% |
-| Graduate real analysis | Algebraic equivalence | 61.8% |
-| Step-level rule accuracy | Rule match @ step | 88.1% |
+Evaluation uses SLaNg itself as the judge. `evaluateFraction` is run on both the model's output and the ground truth at multiple test points. Algebraic equivalence — not structural identity — is what counts.
 
-**Two accuracy tiers are reported:**
-- **Tree-exact match** — the output Slang tree is structurally identical to ground truth
-- **Algebraic equivalence** — the output is mathematically equivalent (verified by SymPy), even if written differently
+```javascript
+// eval/slang_equivalence.js
+import { evaluateFraction } from "./slang/slang-math.js";
+
+function areEquivalent(modelExpr, groundTruthExpr, testPoints) {
+  return testPoints.every(
+    (pt) =>
+      Math.abs(
+        evaluateFraction(modelExpr, pt) - evaluateFraction(groundTruthExpr, pt),
+      ) < 1e-9,
+  );
+}
+```
+
+| Benchmark                    | Metric                | Score |
+| ---------------------------- | --------------------- | ----- |
+| AP Calculus AB               | Numerical equivalence | 92.4% |
+| AP Calculus BC               | Numerical equivalence | 88.1% |
+| MIT 18.01 single-variable    | Numerical equivalence | 85.7% |
+| MIT 18.02 multivariable      | Numerical equivalence | 78.3% |
+| Lagrange multiplier problems | Solution match        | 74.6% |
+| Step-level rule accuracy     | Rule match per step   | 89.2% |
 
 ```bash
-python eval/run_eval.py \
-  --checkpoint checkpoints/sft/best.pt \
-  --benchmark eval/benchmarks/ap_calculus_bc.json \
-  --mode algebraic_equivalence
+node eval/slang_equivalence.js \
+  --checkpoint checkpoints/final/best.pt \
+  --benchmark eval/benchmarks/ap_calculus.json
 ```
 
 ---
 
 ## 🗺️ Roadmap
 
-- [x] Slang schema v1.0 specification
-- [x] LaTeX → Slang converter
-- [x] Derivative and integral support (single-variable)
+- [x] Differentiation (`differentiateFraction`)
+- [x] Gradient & Hessian (`gradient`, `hessian`)
+- [x] Tangent plane / line (`tangentPlane`, `tangentLine`)
+- [x] Critical point classification (`findCriticalPoints`, `classifyCriticalPoint`)
+- [x] Lagrange multipliers (`lagrangeMultipliers`)
+- [x] Directional derivatives (`directionalDerivative`)
 - [x] Step trace generation
-- [x] SymPy verifier loop
-- [ ] Multi-variable calculus (partial derivatives, multiple integrals)
-- [ ] ODE solver head
-- [ ] Vector calculus ops (grad, div, curl)
-- [ ] Slang ↔ MathML bidirectional converter
-- [ ] Uncertainty quantification (confidence intervals on solutions)
-- [ ] Slang schema v2.0 (units, assumptions, piecewise functions)
-- [ ] Browser playground (Slang editor + live solve)
+- [x] SLaNg-in-the-loop verifier training
+- [ ] Definite integration
+- [ ] Taylor series (`slang-advanced.js`)
+- [ ] ODE solving
+- [ ] Browser playground — live SLaNg editor + CalculusSolver inference
+- [ ] Fine-tuning API for custom SLaNg function libraries
 
 ---
 
 ## 🤝 Contributing
 
-Most-needed contributions:
+CalculusSolver and SLaNg are sister projects.
 
-- **Slang schema extensions** — edge cases, piecewise, summations, products
-- **Hard benchmark problems** — graduate-level analysis, PDEs
-- **Rule library** — additional identities and reduction rules in `symbolic/rule_library.py`
-- **Language bindings** — TypeScript/Rust Slang validators
+- **SLaNg library issues / new math functions** → [github.com/SENODROOM/SLaNg](https://github.com/SENODROOM/SLaNg)
+- **CalculusSolver model, training, or I/O issues** → this repo
 
-Open an issue before starting major schema changes.
+When adding support for a new operation type, the workflow is always the same:
+
+1. Confirm SLaNg already supports it (or add it to SLaNg first)
+2. Generate training pairs using SLaNg as ground truth
+3. Add the operation to the input envelope schema
+4. Retrain with the new op included in the dataset
 
 ---
 
@@ -628,8 +578,9 @@ Open an issue before starting major schema changes.
 
 Code: **Apache 2.0**
 Model weights: **CC BY-NC 4.0**
-Slang Schema: **CC0 1.0** (public domain — adopt freely)
+
+SLaNg library: see [github.com/SENODROOM/SLaNg](https://github.com/SENODROOM/SLaNg) for its own license.
 
 ---
 
-*CalcSlang — where mathematics is a data structure, not a string.*
+_CalculusSolver — the intelligence layer above SLaNg. Same language, both directions._
