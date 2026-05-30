@@ -3,8 +3,6 @@ from pathlib import Path
 
 import streamlit as st
 
-from inference.solve import CalculusSolverInference
-
 
 ROOT = Path(__file__).resolve().parent
 
@@ -25,6 +23,8 @@ def resolve_model_path() -> Path:
 @st.cache_resource
 def load_solver():
     try:
+        from inference.solve import CalculusSolverInference
+
         return (
             CalculusSolverInference(
                 model_path=str(resolve_model_path()),
