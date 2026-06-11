@@ -2,12 +2,12 @@
 /solve route — handles both neural CalculusSolverInference and FallbackSolver.
 
 Neural solver returns:
-  {"input", "output_tokens", "status", "verified", "confidence", "rule", "output", "warning"}
-  where output = {"expr": ..., "steps": [...]}
+    {"input", "output_tokens", "status", "verified", "confidence", "rule", "output", "warning"}
+    where output = {"expr": ..., "steps": [...]}
 
 FallbackSolver returns:
-  {"status", "expr", "steps", "latex", "confidence", "verified", "warning", "rule"}
-  (already in final response shape)
+    {"status", "expr", "steps", "latex", "confidence", "verified", "warning", "rule"}
+    (already in final response shape)
 """
 
 import json
