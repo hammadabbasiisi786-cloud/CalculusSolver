@@ -5,7 +5,6 @@ from model.checkpoint_utils import create_dummy_checkpoint, validate_checkpoint
 from inference.router import standalone_inference
 from inference.eval_harness import (
     exact_match_accuracy,
-    eval_step_trace,
     compare_models_v1_placeholder,
     run_error_analysis_v1_placeholder,
 )
@@ -13,20 +12,18 @@ from inference.eval_harness import (
 def load_benchmark_data(benchmark_dir="eval/benchmarks"):
     inputs = []
     ground_truths = []
-    expected_traces = []
     
     if not os.path.exists(benchmark_dir):
-        return inputs, ground_truths, expected_traces
+        return inputs, ground_truths
         
     for filepath in glob.glob(os.path.join(benchmark_dir, "*.json")):
         with open(filepath, 'r') as f:
             data = json.load(f)
             for item in data:
-                inputs.append(item.get("input", ""))
-                ground_truths.append(item.get("output", ""))
-                expected_traces.append(item.get("trace", []))
+                inputs.append(item.get("expr", ""))
+                ground_truths.append(item.get("target", ""))
                 
-    return inputs, ground_truths, expected_traces
+    return inputs, ground_truths
 
 def run_end_to_end_pipeline():
     checkpoint_path = "checkpoints/dummy_model.pt"
@@ -41,31 +38,29 @@ def run_end_to_end_pipeline():
             create_dummy_checkpoint(checkpoint_path)
     else:
         expected_shapes = {
-            "CalculusSolverModel.real_key_placeholder": (0, 0)
+            "encoder.embedding.weight": (1000, 256),
+            "decoder.fc_out.weight": (256, 1000),
+            "rule_head.classifier.weight": (50, 256),
+            "step_tracer.classifier.weight": (100, 256)
         }
         
     validate_checkpoint(checkpoint_path, expected_shapes)
     
-    inputs, ground_truths, expected_traces = load_benchmark_data()
+    inputs, ground_truths = load_benchmark_data()
     
     predictions = []
-    generated_traces = []
     
     for x in inputs:
         output = standalone_inference(checkpoint_path, x, strategy="beam")
         if isinstance(output, dict):
             predictions.append(output.get("prediction", ""))
-            generated_traces.append(output.get("trace", []))
         else:
             predictions.append(output)
-            generated_traces.append([])
-        
+            
     em_score = exact_match_accuracy(predictions, ground_truths)
-    trace_score = eval_step_trace(generated_traces, expected_traces)
     error_report = run_error_analysis_v1_placeholder(predictions, ground_truths)
     
     print(f"Accuracy: {em_score}")
-    print(f"Trace Score: {trace_score}")
     print(f"Errors: {error_report}")
 
 if __name__ == "__main__":
