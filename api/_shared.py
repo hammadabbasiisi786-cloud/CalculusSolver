@@ -136,31 +136,47 @@ def get_solver():
             _solver_error = str(exc)
             print(f"[CalculusSolver] Groq load failed: {exc}", flush=True)
 
-    # 2. Load B's real solver
-    try:
-        from inference.solve import CalculusSolverInference
-        _solver = CalculusSolverInference()
-        _solver_mode = "inference"
-        _solver_error = None
+    # 2. Try neural solver — resolve checkpoint path first
+    model_path, stage = _resolve_model_path()
+    if model_path is not None:
+        try:
+            from inference.solve import CalculusSolverInference
+            _solver = CalculusSolverInference(model_path=model_path)
+            _solver_mode = "neural"
+            _solver_error = None
+            print(
+                f"[CalculusSolver] Neural model loaded from stage='{stage}' path='{model_path}'",
+                flush=True,
+            )
+            return _solver, _solver_mode
+        except Exception as exc:
+            _solver_error = str(exc)
+            print(
+                f"[CalculusSolver] Neural load failed (stage='{stage}', path='{model_path}'): {exc}",
+                flush=True,
+            )
+    else:
+        _solver_error = (
+            "No neural checkpoint found. Checked: MODEL_PATH env, "
+            "checkpoints/final/best.pt, checkpoints/sft/best.pt, "
+            "checkpoints/pretrain/best.pt."
+        )
         print(
-            "[CalculusSolver] B's solver loaded successfully.",
+            f"[CalculusSolver] No checkpoint found — skipping neural solver. {_solver_error}",
             flush=True,
         )
-    except Exception as exc:
-        _solver_error = str(exc)
-        print(f"[CalculusSolver] B's solver load failed: {exc}", flush=True)
-        # Final fallback — always available
-        from inference.fallback_solver import FallbackSolver
 
-        _solver = FallbackSolver()
-        _solver_mode = "fallback"
-        if not _solver_error:
-            _solver_error = "B's solver failed to load. Using deterministic fallback."
-        print(
-            "[CalculusSolver] Running in FALLBACK mode — "
-            "supports diff, partial, integrate, gradient, tangent_line.",
-            flush=True,
-        )
+    # 3. Fallback
+    from inference.fallback_solver import FallbackSolver
+    _solver = FallbackSolver()
+    _solver_mode = "fallback"
+    if not _solver_error:
+        _solver_error = "No GROQ_API_KEY provided. Falling back to deterministic solver."
+    print(
+        "[CalculusSolver] Running in FALLBACK mode — "
+        "supports diff, partial, integrate, gradient, tangent_line.",
+        flush=True,
+    )
     return _solver, _solver_mode
 
 

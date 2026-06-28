@@ -125,9 +125,10 @@ def test_fraction_token_starts_with_node_frac():
 
 
 def test_fraction_contains_struct_open():
-    # STRUCT:OPEN is the bracket token used by the serializer.
-    # NOTE: this token is defined as OPEN = "STRUCT:OPEN" inside slang_serializer.py
-    # but does NOT appear in vocab.json — this is a known discrepancy.
+    # STRUCT:OPEN is the bracket token used by the serializer as the opening
+    # bracket inside fraction and op-node structures.
+    # It is defined as OPEN = "STRUCT:OPEN" in slang_serializer.py and is
+    # present in vocab.json at ID 23 (assigned in vocab v1.1, Fix 3).
     tokens = serialize_slang_math(SIMPLE_FRACTION)
     assert "STRUCT:OPEN" in tokens
 

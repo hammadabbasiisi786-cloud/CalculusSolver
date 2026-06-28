@@ -2,12 +2,17 @@
 Root conftest.py — shared fixtures for all test suites.
 
 Provides:
-  reset_solver_singleton — autouse fixture that clears the api._shared
-  solver singleton before every test. This prevents solver state from
-  leaking between test modules when pytest runs all suites in one process.
+  reset_solver_singleton — autouse fixture that:
+    1. Clears the api._shared solver singleton before every test
+    2. Removes GROQ_API_KEY and MODEL_PATH from the environment
+    3. Monkeypatches _resolve_model_path() to always return (None, None)
 
-  Explicitly removes GROQ_API_KEY from the environment so that
-  get_solver() always falls through to FallbackSolver in CI and locally.
+  The monkeypatch on _resolve_model_path() is the critical part of Fix 2.
+  Without it, tests that assert solver_mode == "fallback" only pass because
+  no checkpoint files happen to exist on disk. If anyone commits a checkpoint
+  file to any of the priority locations, those tests would silently start
+  hitting the neural path. The monkeypatch makes the fallback path explicit
+  and unconditional — tests pass regardless of what files exist on disk.
 """
 
 import os
@@ -15,31 +20,60 @@ import pytest
 
 
 @pytest.fixture(autouse=True)
-def reset_solver_singleton():
+def reset_solver_singleton(monkeypatch):
     """
-    Clear the solver singleton and remove GROQ_API_KEY before every test.
+    Reset solver singleton, strip credential env vars, and force the
+    fallback path for every test via monkeypatching.
 
     autouse=True means this runs automatically for every test in every
-    test file, with no need to import or reference it explicitly.
+    test file with no need to import or reference it explicitly.
 
-    Yields control to the test, then does nothing on teardown — the
-    singleton stays reset for the next test because the next invocation
-    of this fixture will reset it again before that test runs.
+    Uses pytest's built-in monkeypatch fixture so that all patches are
+    automatically undone after each test — no manual cleanup needed.
+
+    Why monkeypatch _resolve_model_path:
+      After Fix 1, get_solver() calls _resolve_model_path() to find a
+      checkpoint before attempting neural load. If any checkpoint file
+      exists on disk (or MODEL_PATH is set), _resolve_model_path() returns
+      a non-None path and the neural solver is attempted. Patching it to
+      always return (None, None) guarantees the neural block is always
+      skipped in tests, making fallback-mode assertions unconditionally
+      correct rather than accidentally correct due to file absence.
+
+    Why remove MODEL_PATH:
+      MODEL_PATH is read by _resolve_model_path(). Even with the
+      monkeypatch in place it cannot cause harm, but removing it makes
+      the intent explicit — no checkpoint resolution of any kind should
+      occur during tests.
     """
-    # Remove Groq key first so that any import of api._shared triggered
-    # below does not accidentally instantiate GroqSolver
+    # ── Strip environment variables that influence solver selection ───────────
     os.environ.pop("GROQ_API_KEY", None)
+    os.environ.pop("MODEL_PATH", None)
 
-    # Import here (not at module level) to avoid circular import issues
-    # if conftest is loaded before the package is fully on sys.path
+    # ── Reset the singleton and monkeypatch _resolve_model_path ───────────────
     try:
         import api._shared as _shared
+
+        # Reset cached singleton so every test starts with a fresh solver load
         _shared._solver = None
         _shared._solver_mode = "unloaded"
         _shared._solver_error = None
+
+        # Force _resolve_model_path to always return (None, None).
+        # This makes get_solver() skip the neural block unconditionally,
+        # regardless of what checkpoint files exist on disk.
+        # monkeypatch.setattr automatically restores the original function
+        # after each test — no manual cleanup needed.
+        monkeypatch.setattr(
+            _shared,
+            "_resolve_model_path",
+            lambda: (None, None),
+        )
+
     except ImportError:
-        # api._shared not importable yet (e.g. during unit-only runs
-        # where the api package is not needed). Safe to ignore.
+        # api._shared not importable (e.g. during unit-only runs where
+        # the api package is not on sys.path). Safe to ignore — unit tests
+        # do not touch the solver singleton.
         pass
 
     yield
