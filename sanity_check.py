@@ -3,10 +3,15 @@ import os
 import json
 from pathlib import Path
 
-# Inject current directory to resolve module pathing context issues safely
-sys.path.append(os.path.abspath(os.path.dirname(__file__)))
+# Force position lookup context for internal submodules
+sys.path.insert(0, os.path.abspath(os.path.dirname(__file__)))
 
-from tokenizer.slang_serializer import serialize_slang_math
+try:
+    from tokenizer.slang_serializer import serialize_slang_math
+except ModuleNotFoundError:
+    # Double-fallback logic if working directory context is deep nested
+    sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), "..")))
+    from tokenizer.slang_serializer import serialize_slang_math
 
 def run_strict_validation():
     print("🕵️ Starting execution sanity verification check against dataset paths...")

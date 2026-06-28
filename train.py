@@ -1,3 +1,7 @@
+import sys
+import os
+# Force lookups for workspace root subfolders
+sys.path.insert(0, os.path.abspath(os.path.dirname(__file__)))
 import json
 import torch
 import torch.nn as nn
